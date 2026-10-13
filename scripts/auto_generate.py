@@ -11,7 +11,7 @@ from pathlib import Path
 
 def gemini_text(api_key: str, prompt: str) -> str:
     url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-           "gemini-2.5-flash:generateContent")
+           "gemini-3.8-flash:generateContent")
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.65, "responseMimeType": "application/json"},
