@@ -34,7 +34,7 @@ def generate_image(prompt: str, output_path: str, api_key: str) -> bool:
     try:
         # Nano Banana Pro uses generate_content with IMAGE modality
         response = client.models.generate_content(
-            model="nano-banana-pro-preview",
+            model="gemini-2.5-flash-image",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
