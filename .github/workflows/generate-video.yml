@@ -164,6 +164,6 @@ jobs:
             projects/auto_video/educational-video.mp4
             projects/auto_video/segments.json
             projects/auto_video/subtitles.srt
-            projects/auto_video/educational-video.chapters.txt
+            projects/auto_video/video-without-subtitles.chapters.txt
           if-no-files-found: error
           retention-days: 7
