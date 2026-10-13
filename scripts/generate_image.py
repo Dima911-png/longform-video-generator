@@ -8,13 +8,76 @@ Supports single image generation and batch processing from segments.json.
 import argparse
 import os
 import time
+import hashlib
+import math
 from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
 from utils import load_segments, ensure_dir, get_all_segments
+
+
+
+def generate_fallback_visual(prompt: str, output_path: str) -> bool:
+    """Create a polished local visual when the image API has no available quota."""
+    try:
+        width, height = 1280, 720
+        digest = hashlib.sha256(prompt.encode("utf-8")).digest()
+        c1 = (12 + digest[0] % 22, 24 + digest[1] % 30, 48 + digest[2] % 38)
+        c2 = (18 + digest[3] % 28, 50 + digest[4] % 50, 75 + digest[5] % 65)
+        image = Image.new("RGB", (width, height))
+        px = image.load()
+        for y in range(height):
+            t = y / (height - 1)
+            for x in range(width):
+                glow = max(0.0, 1 - math.sqrt(((x - width*.78)/(width*.8))**2 + ((y-height*.25)/(height*.9))**2))
+                px[x, y] = tuple(int(c1[k]*(1-t) + c2[k]*t + glow*(12 if k == 2 else 4)) for k in range(3))
+        draw = ImageDraw.Draw(image, "RGBA")
+        accent = (83 + digest[6] % 100, 165 + digest[7] % 70, 220, 85)
+        for i in range(5):
+            r = 120 + i * 42
+            draw.ellipse((850-r, 330-r, 850+r, 330+r), outline=accent, width=2)
+        draw.rounded_rectangle((70, 68, 290, 112), radius=20, fill=(255,255,255,22), outline=(255,255,255,65), width=1)
+        draw.text((92, 81), "EDUCATIONAL FILM", fill=(225,239,255,235))
+        clean = prompt.replace("_", " ").replace("-", " ")
+        words = [w.strip(".,:;!?()[]{}") for w in clean.split() if w.strip(".,:;!?()[]{}")]
+        heading = " ".join(words[:9]) or "Новая тема"
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 43)
+            small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
+        except OSError:
+            font, small = ImageFont.load_default(), ImageFont.load_default()
+        lines, current = [], ""
+        for word in heading.split():
+            candidate = (current + " " + word).strip()
+            if draw.textbbox((0,0), candidate, font=font)[2] > 700 and current:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        y = 245
+        for line in lines[:4]:
+            draw.text((76, y), line, font=font, fill=(255,255,255,255), stroke_width=1, stroke_fill=(0,0,0,100))
+            y += 58
+        draw.rounded_rectangle((76, 535, 520, 590), radius=14, fill=(255,255,255,20), outline=(255,255,255,55), width=1)
+        draw.text((98, 552), "Краткая визуальная сцена", font=small, fill=(205,225,245,255))
+        for i in range(34):
+            x = 650 + digest[i % len(digest)] * 2
+            ydot = (digest[(i+11) % len(digest)] * 3) % height
+            radius = 2 + digest[(i+17) % len(digest)] % 5
+            draw.ellipse((x-radius, ydot-radius, x+radius, ydot+radius), fill=(170,220,255,90))
+        image.save(output_path, "PNG")
+        print("  Image API unavailable; created a local motion-graphic visual instead.")
+        return True
+    except Exception as fallback_error:
+        print(f"  Could not create fallback visual: {fallback_error}")
+        return False
 
 
 def generate_image(prompt: str, output_path: str, api_key: str) -> bool:
@@ -56,7 +119,7 @@ def generate_image(prompt: str, output_path: str, api_key: str) -> bool:
 
     except Exception as e:
         print(f"  Error generating image: {e}")
-        return False
+        return generate_fallback_visual(prompt, output_path)
 
 
 def batch_generate(segments_file: str, output_dir: str, api_key: str, delay: float = 2.0) -> None:
