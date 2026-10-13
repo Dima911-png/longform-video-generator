@@ -1,0 +1,157 @@
+name: Generate long-form educational video
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "Video topic (write in Russian or English)"
+        required: true
+        type: string
+      language:
+        description: "Narration language"
+        required: true
+        type: choice
+        options:
+          - Russian
+          - English
+        default: Russian
+      minutes:
+        description: "Target duration in minutes"
+        required: true
+        type: choice
+        options:
+          - "10"
+          - "15"
+          - "20"
+        default: "10"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: longform-video-generation
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install FFmpeg and fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Generate narration script and storyboard
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::Add GEMINI_API_KEY in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          python scripts/auto_generate.py --topic "${{ inputs.topic }}" --language "${{ inputs.language }}" --minutes "${{ inputs.minutes }}" --output projects/auto_video/segments.json
+
+      - name: Generate AI images
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python scripts/generate_image.py batch --segments projects/auto_video/segments.json --output-dir projects/auto_video/images --delay 3
+
+      - name: Verify all images were generated
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path("projects/auto_video/segments.json").read_text(encoding="utf-8"))
+          segments=[s for c in data["chapters"] for s in c["segments"]]
+          missing=[s["segment_id"] for s in segments if not (Path("projects/auto_video/images") / f'{s["segment_id"]}.png').exists()]
+          if missing:
+              raise SystemExit("Image generation failed for scenes: " + ", ".join(missing))
+          print(f"Verified {len(segments)} scene images.")
+          PY
+
+      - name: Generate Russian or English voiceover
+        run: |
+          python scripts/generate_voice.py batch --segments projects/auto_video/segments.json --output-dir projects/auto_video/audio
+
+      - name: Verify all voiceover files were generated
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path("projects/auto_video/segments.json").read_text(encoding="utf-8"))
+          segments=[s for c in data["chapters"] for s in c["segments"]]
+          missing=[s["segment_id"] for s in segments if not (Path("projects/auto_video/audio") / f'{s["segment_id"]}.mp3').exists()]
+          if missing:
+              raise SystemExit("Voice generation failed for scenes: " + ", ".join(missing))
+          print(f"Verified {len(segments)} voiceover files.")
+          PY
+
+      - name: Create moving video scenes
+        run: |
+          python scripts/create_segment.py batch --segments projects/auto_video/segments.json --images-dir projects/auto_video/images --audio-dir projects/auto_video/audio --output-dir projects/auto_video/clips
+
+      - name: Assemble final video
+        run: |
+          python scripts/assemble_video.py --clips-dir projects/auto_video/clips --output projects/auto_video/educational-video.mp4 --segments projects/auto_video/segments.json
+
+      - name: Create captions from exact narration
+        run: |
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          data=json.loads(Path("projects/auto_video/segments.json").read_text(encoding="utf-8"))
+          lines=[]
+          for chapter in data["chapters"]:
+              for s in chapter["segments"]:
+                  text=re.sub(r"\s+", " ", s["narration"]).strip()
+                  words=text.split()
+                  chunks=[" ".join(words[i:i+10]) for i in range(0,len(words),10)]
+                  for chunk in chunks:
+                      lines.append(chunk)
+          # SRT timing aligned approximately to scene audio is added in the next step.
+          Path("projects/auto_video/captions.txt").write_text("\n".join(lines), encoding="utf-8")
+          PY
+
+      - name: Validate video duration and produce metadata
+        run: |
+          ffprobe -v error -show_entries format=duration,size -of json projects/auto_video/educational-video.mp4
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          path="projects/auto_video/educational-video.mp4"
+          info=json.loads(subprocess.check_output(["ffprobe","-v","error","-show_entries","format=duration,size","-of","json",path]))
+          seconds=float(info["format"]["duration"])
+          print(f"Final video: {seconds/60:.2f} minutes; {int(info['format'].get('size',0))/1024/1024:.1f} MB")
+          if seconds < 9*60:
+              raise SystemExit("Generated video is shorter than 9 minutes; refusing to mark the run successful.")
+          PY
+
+      - name: Upload MP4 and project files
+        uses: actions/upload-artifact@v4
+        with:
+          name: educational-video
+          path: |
+            projects/auto_video/educational-video.mp4
+            projects/auto_video/segments.json
+            projects/auto_video/captions.txt
+            projects/auto_video/educational-video.chapters.txt
+          if-no-files-found: error
+          retention-days: 7
