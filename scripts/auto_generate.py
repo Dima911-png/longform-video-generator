@@ -11,20 +11,29 @@ from pathlib import Path
 
 def gemini_text(api_key: str, prompt: str) -> str:
     url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-           "gemini-2.5-flash:generateContent?key=" + api_key)
+           "gemini-2.5-flash:generateContent")
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.65, "responseMimeType": "application/json"},
     }
     request = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}, method="POST",
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key.strip()},
+        method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=240) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
+        if exc.code in (401, 403):
+            raise RuntimeError(
+                f"Gemini authentication failed (HTTP {exc.code}). The saved GEMINI_API_KEY "
+                "was rejected. In Google AI Studio create/copy an API key (not an OAuth "
+                "client ID or access token), then replace the repository secret "
+                "GEMINI_API_KEY. Also verify Generative Language API access. "
+                f"Google response: {details[:1000]}"
+            ) from exc
         raise RuntimeError(f"Gemini API HTTP {exc.code}: {details[:1500]}") from exc
     try:
         text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
