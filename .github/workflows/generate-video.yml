@@ -44,7 +44,7 @@ jobs:
       - name: Install FFmpeg and fonts
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          sudo apt-get install -y ffmpeg fonts-dejavu-core espeak-ng
           ffmpeg -version
           ffprobe -version
 
@@ -92,14 +92,24 @@ jobs:
       - name: Verify all voiceover files were generated
         run: |
           python - <<'PY'
-          import json
+          import json, subprocess
           from pathlib import Path
           data=json.loads(Path("projects/auto_video/segments.json").read_text(encoding="utf-8"))
           segments=[s for c in data["chapters"] for s in c["segments"]]
-          missing=[s["segment_id"] for s in segments if not (Path("projects/auto_video/audio") / f'{s["segment_id"]}.mp3').exists()]
+          missing=[]
+          for scene in segments:
+              path=Path("projects/auto_video/audio") / f'{scene["segment_id"]}.mp3'
+              if not path.exists() or path.stat().st_size < 1000:
+                  missing.append(scene["segment_id"]); continue
+              probe=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",str(path)],capture_output=True,text=True)
+              try:
+                  if probe.returncode != 0 or float(probe.stdout.strip()) <= 0.1:
+                      missing.append(scene["segment_id"])
+              except ValueError:
+                  missing.append(scene["segment_id"])
           if missing:
               raise SystemExit("Voice generation failed for scenes: " + ", ".join(missing))
-          print(f"Verified {len(segments)} voiceover files.")
+          print(f"Verified {len(segments)} valid voiceover files.")
           PY
 
       - name: Create moving video scenes
