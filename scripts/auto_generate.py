@@ -4,44 +4,53 @@ import argparse
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 
 def gemini_text(api_key: str, prompt: str) -> str:
-    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-           "gemini-3.8-flash:generateContent")
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.65, "responseMimeType": "application/json"},
-    }
-    request = urllib.request.Request(
-        url, data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "x-goog-api-key": api_key.strip()},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=240) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        if exc.code in (401, 403):
-            raise RuntimeError(
-                f"Gemini authentication failed (HTTP {exc.code}). The saved GEMINI_API_KEY "
-                "was rejected. In Google AI Studio create/copy an API key (not an OAuth "
-                "client ID or access token), then replace the repository secret "
-                "GEMINI_API_KEY. Also verify Generative Language API access. "
-                f"Google response: {details[:1000]}"
-            ) from exc
-        raise RuntimeError(f"Gemini API HTTP {exc.code}: {details[:1500]}") from exc
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError("Gemini returned no text: " + json.dumps(data)[:1500]) from exc
-    text = re.sub(r"^\x60{3}(?:json)?\s*", "", text)
-    text = re.sub(r"\s*\x60{3}$", "", text)
-    return text
+    # Retry temporary Google capacity errors, then try a lighter model.
+    models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+    last_error = None
+    for model in models:
+        for attempt in range(4):
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.65, "responseMimeType": "application/json"},
+            }
+            request = urllib.request.Request(
+                url, data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key.strip()},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=240) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                text = re.sub(r"^```(?:json)?\s*", "", text)
+                text = re.sub(r"\s*```$", "", text)
+                return text
+            except urllib.error.HTTPError as exc:
+                details = exc.read().decode("utf-8", errors="replace")
+                last_error = f"Gemini model {model}, HTTP {exc.code}: {details[:1000]}"
+                if exc.code in (401, 403):
+                    raise RuntimeError(
+                        f"Gemini authentication failed (HTTP {exc.code}). Check the GEMINI_API_KEY "
+                        f"repository secret and Generative Language API access. Google response: {details[:1000]}"
+                    ) from exc
+                if exc.code not in (408, 429, 500, 502, 503, 504):
+                    raise RuntimeError(last_error) from exc
+                if attempt < 3:
+                    wait = 2 ** (attempt + 1)
+                    print(f"Temporary Gemini error {exc.code}; retrying {model} in {wait}s (attempt {attempt + 2}/4).")
+                    time.sleep(wait)
+            except (KeyError, IndexError, TypeError) as exc:
+                raise RuntimeError("Gemini returned no text: " + json.dumps(data)[:1500]) from exc
+        print(f"Model {model} still unavailable; trying fallback model.")
+    raise RuntimeError((last_error or "Gemini API request failed") + ". Both models were unavailable after retries; rerun the workflow later.")
 
 
 def main():
