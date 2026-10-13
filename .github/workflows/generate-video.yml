@@ -56,12 +56,15 @@ jobs:
       - name: Generate narration script and storyboard
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          VIDEO_TOPIC: ${{ inputs.topic }}
+          VIDEO_LANGUAGE: ${{ inputs.language }}
+          VIDEO_MINUTES: ${{ inputs.minutes }}
         run: |
           if [ -z "$GEMINI_API_KEY" ]; then
             echo "::error::Add GEMINI_API_KEY in Settings → Secrets and variables → Actions."
             exit 1
           fi
-          python scripts/auto_generate.py --topic "${{ inputs.topic }}" --language "${{ inputs.language }}" --minutes "${{ inputs.minutes }}" --output projects/auto_video/segments.json
+          python scripts/auto_generate.py --topic "$VIDEO_TOPIC" --language "$VIDEO_LANGUAGE" --minutes "$VIDEO_MINUTES" --output projects/auto_video/segments.json
 
       - name: Generate AI images
         env:
