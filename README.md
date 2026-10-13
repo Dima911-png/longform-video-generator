@@ -2,6 +2,21 @@
 
 A Python-based CLI tool system for creating 30+ minute documentary-style videos using AI-generated content. The system produces professional videos from still images with Ken Burns effects, AI voiceover narration, and background music.
 
+
+## One-click video generation on GitHub (phone-friendly)
+
+This fork includes a GitHub Actions workflow that can generate a narrated educational video from a topic without installing Python or FFmpeg on your phone.
+
+1. In the repository, open **Settings → Secrets and variables → Actions → New repository secret**.
+2. Set the secret name to `GEMINI_API_KEY` and paste your key from Google AI Studio into the secret value. Never put the key in a source file or commit.
+3. Open the **Actions** tab and select **Generate long-form educational video**.
+4. Tap **Run workflow**, enter the topic, choose Russian or English and select 10, 15 or 20 minutes.
+5. When the run succeeds, open it and download the **educational-video** artifact. It contains the MP4 with burned-in subtitles, the scene plan and subtitle file.
+
+The workflow creates the narration and visual plan, generates scene images, creates voiceover with Edge TTS, animates images with pan/zoom, adds readable subtitles, and checks the final video duration. The target length is approximate; generated scripts and voice timing can vary.
+
+**Important:** the workflow is committed but has not been tested with your API key yet. Google image-generation model access and free-tier quotas depend on your Google AI Studio account and can cause a run to fail or require billing. GitHub Actions must be enabled for the repository. No API key is needed for Edge TTS voice generation.
+
 ## Features
 
 - **You Control the Content**: Write your own narration script and image prompts
